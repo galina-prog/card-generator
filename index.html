@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>角色卡生成器</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:"PingFang SC","Microsoft YaHei",sans-serif;background:#f0f2f5;color:#2d3436;padding:24px}
+.wrap{max-width:1200px;margin:0 auto}
+h1{text-align:center;margin-bottom:4px}
+.sub{text-align:center;color:#999;margin-bottom:24px;font-size:14px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start}
+@media(max-width:900px){.grid{grid-template-columns:1fr}}
+.card{background:#fff;border-radius:12px;padding:20px;margin-bottom:16px;box-shadow:0 1px 6px rgba(0,0,0,.06)}
+.card h2{font-size:15px;margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid #eee;color:#0984e3}
+.f{margin-bottom:12px}
+.f label{display:block;font-size:12px;font-weight:600;color:#636e72;margin-bottom:4px}
+.f input,.f textarea{width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;font-family:inherit;outline:none}
+.f input:focus,.f textarea:focus{border-color:#74b9ff}
+.f textarea{resize:vertical;min-height:50px}
+.preview{background:#1e272e;color:#e8ecf1;border-radius:12px;padding:20px;font-family:Consolas,monospace;font-size:12.5px;line-height:1.7;white-space:pre-wrap;word-break:break-word;min-height:500px;max-height:85vh;overflow-y:auto}
+.btns{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+button{padding:8px 16px;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600}
+.b1{background:#0984e3;color:#fff}.b2{background:#dfe6e9;color:#2d3436}.b3{background:#ffeaea;color:#d63031}
+#toast{position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:#00b894;color:#fff;padding:8px 20px;border-radius:99px;font-size:13px;opacity:0;transition:.3s;pointer-events:none}
+#toast.show{opacity:1}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>🎴 角色卡生成器</h1>
+<p class="sub">左边填内容，右边实时生成完整角色卡</p>
+<div class="grid">
+  <div id="formArea"></div>
+  <div>
+    <div class="preview" id="preview"></div>
+    <div class="btns">
+      <button class="b1" onclick="copyMarkdown()">📋 复制</button>
+      <button class="b2" onclick="downloadMD()">⬇ 下载 .md</button>
+      <button class="b2" onclick="exportJSON()">⬇ 导出 JSON</button>
+      <button class="b3" onclick="resetAll()">🗑 清空</button>
+    </div>
+  </div>
+</div>
+</div>
+<div id="toast">已复制</div>
+<script>
+// ========== 1. 配置：角色卡结构（改模板只动这里） ==========
+const SECTIONS = [
+  {title:'一、基本信息', fields:[
+    {k:'name',l:'姓名'},{k:'gender',l:'性别'},{k:'age',l:'年龄'},{k:'birthday',l:'生日'},
+    {k:'appearance',l:'外貌',big:1},{k:'scent',l:'气味'},
+    {k:'identity',l:'身份/职业'},{k:'era',l:'时代背景'},
+  ]},
+  {title:'二、背景经历', fields:[
+    {k:'childhood',l:'童年期（事件 → 影响）',big:1,ph:'事件：\n对性格的影响：'},
+    {k:'youth',l:'少年期（事件 → 影响）',big:1,ph:'事件：\n对性格的影响：'},
+    {k:'turn',l:'转折点（事件 → 影响）',big:1,ph:'事件：\n对性格的影响：'},
+    {k:'change',l:'重大转变（事件 → 影响）',big:1,ph:'事件：\n对性格的影响：'},
+    {k:'now',l:'现状（事件 → 影响）',big:1,ph:'事件：\n对性格的影响：'},
+  ]},
+  {title:'人物关系', fields:[
+    {k:'relLover',l:'对恋人/主角',big:1},{k:'relFamily',l:'对家人',big:1},
+    {k:'relFriend',l:'对朋友/同类',big:1},{k:'relOther',l:'对其他重要人物',big:1},
+  ]},
+  {title:'三、习惯与偏好', fields:[
+    {k:'hRelax',l:'放松时',big:1},{k:'hThink',l:'思考时',big:1},
+    {k:'hHide',l:'克制/掩饰时',big:1},{k:'hTired',l:'疲惫时',big:1},
+    {k:'like',l:'喜欢',big:1},{k:'dislike',l:'讨厌',big:1},
+  ]},
+  {title:'四、背景与资产', fields:[
+    {k:'home',l:'居住地',big:1},{k:'vehicle',l:'座驾/常用物品',big:1},{k:'money',l:'财务状况',big:1},
+  ]},
+  {title:'五、亲密设定（NSFW）', fields:[
+    {k:'tone',l:'整体基调',big:1},{k:'early',l:'关系前期',big:1},
+    {k:'later',l:'关系后期',big:1},{k:'detail',l:'细节偏好',big:1},
+  ]},
+];
+
+// ========== 2. 数据对象 ==========
+const data = {};
+
+// ========== 3. 从配置渲染表单 ==========
+function renderForm(){
+  const area = document.getElementById('formArea');
+  area.innerHTML = SECTIONS.map(sec=>`
+    <div class="card">
+      <h2>${sec.title}</h2>
+      ${sec.fields.map(f=>`
+        <div class="f">
+          <label>${f.l}</label>
+          ${f.big
+            ? `<textarea data-k="${f.k}" placeholder="${f.ph||''}"></textarea>`
+            : `<input data-k="${f.k}" placeholder="${f.ph||''}">`}
+        </div>`).join('')}
+    </div>`).join('');
+  area.querySelectorAll('input,textarea').forEach(el=>{
+    el.addEventListener('input',()=>{
+      data[el.dataset.k] = el.value;
+      saveDraft();
+      renderPreview();
+    });
+  });
+}
+
+// ========== 4. 核心：生成 Markdown ==========
+const F = v => v?.trim() ? v.trim() : '______'; // 空字段显示下划线占位
+
+function md(){
+  let s = `# 角色卡 · ${F(data.name)}\n\n`;
+  s += `## 一、基本信息\n`;
+  s += `- **姓名**：${F(data.name)}\n- **性别**：${F(data.gender)}\n- **年龄**：${F(data.age)}\n- **生日**：${F(data.birthday)}\n`;
+  s += `- **外貌**：${F(data.appearance)}\n- **气味**：${F(data.scent)}\n- **身份/职业**：${F(data.identity)}\n- **时代背景**：${F(data.era)}\n\n`;
+  s += `## 二、背景经历\n`;
+  [['childhood','童年期'],['youth','少年期'],['turn','转折点'],['change','重大转变'],['now','现状']].forEach(([k,label])=>{
+    s += `**${label}**：${F(data[k])}\n`;
+  });
+  s += `\n**人物关系**\n`;
+  s += `- 对恋人/主角：${F(data.relLover)}\n- 对家人：${F(data.relFamily)}\n- 对朋友/同类：${F(data.relFriend)}\n- 对其他重要人物：${F(data.relOther)}\n\n`;
+  s += `## 三、习惯与偏好\n`;
+  s += `- 放松时：${F(data.hRelax)}\n- 思考时：${F(data.hThink)}\n- 克制/掩饰时：${F(data.hHide)}\n- 疲惫时：${F(data.hTired)}\n`;
+  s += `- 喜欢：${F(data.like)}\n- 讨厌：${F(data.dislike)}\n\n`;
+  s += `## 四、背景与资产\n`;
+  s += `- **居住地**：${F(data.home)}\n- **座驾/常用物品**：${F(data.vehicle)}\n- **财务状况**：${F(data.money)}\n\n`;
+  s += `## 五、亲密设定（NSFW）\n`;
+  s += `- **整体基调**：${F(data.tone)}\n- **关系前期**：${F(data.early)}\n- **关系后期**：${F(data.later)}\n- **细节偏好**：${F(data.detail)}\n`;
+  return s;
+}
+
+function renderPreview(){ document.getElementById('preview').textContent = md(); }
+
+// ========== 5. 草稿自动保存（localStorage） ==========
+function saveDraft(){ localStorage.setItem('cardDraft', JSON.stringify(data)); }
+function loadDraft(){
+  try{
+    const d = JSON.parse(localStorage.getItem('cardDraft'));
+    if(d) Object.assign(data, d);
+  }catch(e){}
+}
+
+// ========== 6. 按钮功能 ==========
+function copyMarkdown(){
+  navigator.clipboard.writeText(md()).then(()=>toast('已复制到剪贴板'));
+}
+function downloadMD(){
+  const blob = new Blob([md()], {type:'text/markdown'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `角色卡_${data.name||'未命名'}.md`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+function exportJSON(){
+  const blob = new Blob([JSON.stringify(data,null,2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `角色卡_${data.name||'未命名'}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+function resetAll(){
+  if(!confirm('确定清空所有内容？')) return;
+  Object.keys(data).forEach(k=>delete data[k]);
+  document.querySelectorAll('input,textarea').forEach(el=>el.value='');
+  localStorage.removeItem('cardDraft');
+  renderPreview();
+}
+let toastTimer;
+function toast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>t.classList.remove('show'), 1800);
+}
+
+// ========== 初始化 ==========
+loadDraft();
+renderForm();
+document.querySelectorAll('input,textarea').forEach(el=>{
+  if(data[el.dataset.k] != null) el.value = data[el.dataset.k];
+});
+renderPreview();
+</script>
+</body>
+</html>
